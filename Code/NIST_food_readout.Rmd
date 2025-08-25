@@ -1,0 +1,293 @@
+---
+title: "NIST_diet_readout"
+output: html_document
+date: "2025-08-25"
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.show = 'hide')
+setwd("C:/Users/XXX")
+library(tidyverse)
+library(mixOmics)
+library(stringr)
+library(ggplot2)
+library(ggpubr)
+library(vegan)
+library(tibble)
+library(CoDaSeq)
+library(dplyr)
+```
+
+```{r NIST Sample import}
+biomarkers <- read_csv("Biomarkers.csv") #input biomarkers
+Lib_search <- read_tsv("library_matches.tsv") #input library matching output
+metadata <- read_csv("metadata.csv") #input metadata
+Lib_search <- Lib_search[,c("#Scan#", "Node")]
+colnames(biomarkers)[colnames(biomarkers) == "Feature"] <- "Node"
+Biomarker_hits <- Lib_search %>% left_join(biomarkers, by = "Node")
+
+Sample_featuretable <- read_csv("NIST_Vegan_Ominvore_iimn_gnps_quant.csv") #mzmine export table
+
+#data_transpose
+Sample_transpose <- Sample_featuretable %>% 
+  column_to_rownames("row ID") %>% 
+  dplyr::select(contains(".mzML")) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rownames_to_column("filename")
+
+
+#remove Peak area from filename from feature table
+Sample_transpose$filename <- gsub(" Peak area", "", Sample_transpose$filename)
+Sample_transpose <- Sample_transpose %>% arrange(filename)
+
+data_transpose <- Sample_transpose %>% filter(str_detect(filename, "NIST"))
+
+#Filter features based on blank samples
+blank_samples <- grep("blank_", data_transpose$filename, ignore.case = TRUE)
+cat("Found", length(blank_samples), "blank samples\n")
+
+# Step 2: Separate blank samples from non-blank samples
+blanks <- data_transpose[blank_samples, ]
+non_blanks <- data_transpose[-blank_samples, ]
+
+# Step 3: Calculate maximum signal in blank samples for each column (excluding filename)
+# We exclude the first column (filename) from calculations
+blank_max <- apply(blanks[, -1], 2, max, na.rm = TRUE)
+
+# Step 4: Calculate mean signal in non-blank samples for each column
+non_blank_mean <- apply(non_blanks[, -1], 2, max, na.rm = TRUE)
+
+# Step 5: Find columns where non-blank mean is at least 5x the blank maximum
+ratio <- non_blank_mean / blank_max
+columns_to_keep <- names(ratio)[ratio >= 5 & is.infinite(ratio) & !is.na(ratio)] #5-fold or higher than blank
+
+# Step 6: Create filtered dataset
+# Always keep the filename column plus the filtered columns
+data_transpose <- data_transpose[, c("filename", columns_to_keep)]
+Sample_transpose <- data_transpose
+
+#TIC normalisation
+# Set the row names using the 'filename' column
+Sample_tic <- column_to_rownames(Sample_transpose, var = "filename")
+Sample_tic <- Sample_tic + 1
+Sample_tic <- sweep(Sample_tic, 1, rowSums(Sample_tic), FUN = "/")
+Sample_tic <- Sample_tic * 1e5
+Sample_tic <- as.data.frame(Sample_tic)
+Sample_tic <- t(Sample_tic) %>% as.data.frame()
+
+# Bring row names into a column called "row ID"
+Sample_tic <- Sample_tic %>% rownames_to_column("row ID")
+
+Sample_transpose <- Sample_transpose %>% column_to_rownames("filename")
+Sample_transpose <- t(Sample_transpose) %>% as.data.frame()
+Sample_transpose <- Sample_transpose %>% rownames_to_column("row ID")
+
+Biomarkers_in_samples <- Sample_tic %>%
+  filter(`row ID` %in% Lib_search$`#Scan#`)
+
+Biomarkers_in_samples <- Biomarkers_in_samples %>% 
+  column_to_rownames("row ID") %>% 
+  dplyr::select(contains(".mzML")) %>%
+  as.data.frame() %>% 
+  rownames_to_column("#Scan#")
+
+Biomarker_hits$`#Scan#` <- as.character(Biomarker_hits$`#Scan#`)
+Biomarkers_in_samples <- Biomarkers_in_samples %>% left_join(Biomarker_hits, by = "#Scan#" )
+Biomarkers_in_samples <- Biomarkers_in_samples %>% na.omit(Biomarkers_in_samples$category)
+df_foods <- Biomarkers_in_samples %>%
+  separate_rows(category, sep = ", ") 
+
+food_summarized <- df_foods %>%
+  group_by(category) %>%
+  dplyr::summarise(across(contains("mzML"), mean, na.rm = TRUE)) %>%
+  ungroup()
+
+food_summarized <- food_summarized %>%
+  column_to_rownames("category") 
+food_summarized <- food_summarized %>% t() %>% as.data.frame()
+food_summarized <- food_summarized %>% rownames_to_column("filename")
+
+food_summarized$filename <- gsub(" Peak area", "", food_summarized$filename)
+metadata$filename <- trimws(metadata$filename)
+food_summarized$filename <- trimws(food_summarized$filename)
+food_metadata <- food_summarized %>% left_join(metadata, by = "filename")
+
+#write.csv(food_metadata, "NIST_food_metadata_analog.csv", row.names = FALSE)
+  
+food_metadata <- food_metadata %>% 
+  filter(str_detect(filename, "Vegan|Omni"))
+```
+
+```{r volcano-plot}
+# S-plot for Food Metabolomics Data - Fold Change Analysis
+# This script creates an S-plot to visualize fold-change differences between 
+# Omnivore and Vegan groups across food metabolites
+
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(scales)
+library(ggrepel)
+
+# Read the data
+data <- food_metadata
+
+# Identify food columns (exclude metadata columns)
+metadata_cols <- c("filename", "Sample", "description", "Classifier", "Sub_classifier")
+food_cols <- setdiff(names(data), metadata_cols)
+
+# Prepare data for analysis
+# Extract numeric data for food columns
+food_data <- data[, c("Classifier", food_cols)]
+
+# Calculate group means for each food metabolite
+group_means <- food_data %>%
+  group_by(Classifier) %>%
+  summarise(across(all_of(food_cols), ~ mean(.x, na.rm = TRUE)), .groups = 'drop')
+
+# Calculate fold change (log2) and statistical significance for each metabolite
+# Omnivore vs Vegan (Omnivore as reference)
+omnivore_means <- group_means[group_means$Classifier == "Omnivore", food_cols]
+vegan_means <- group_means[group_means$Classifier == "Vegan", food_cols]
+
+# Calculate log2 fold change (Vegan vs Omnivore)
+# Add small constant to avoid log(0) issues
+epsilon <- 1e-6
+fold_changes <- log2((vegan_means + epsilon) / (omnivore_means + epsilon))
+
+# Calculate p-values using t-test for each metabolite
+p_values <- sapply(food_cols, function(col) {
+  omnivore_vals <- data[data$Classifier == "Omnivore", col]
+  vegan_vals <- data[data$Classifier == "Vegan", col]
+  
+  # Remove NA values
+  omnivore_vals <- omnivore_vals[!is.na(omnivore_vals)]
+  vegan_vals <- vegan_vals[!is.na(vegan_vals)]
+  
+  # Perform t-test if we have enough samples
+  if(length(omnivore_vals) >= 2 && length(vegan_vals) >= 2) {
+    t_test_result <- t.test(vegan_vals, omnivore_vals)
+    return(t_test_result$p.value)
+  } else {
+    return(1)  # Return non-significant p-value if insufficient data
+  }
+})
+
+# Calculate -log10(p-value) for volcano plot
+neg_log10_p <- -log10(p_values)
+
+# Calculate correlation with group classification for each metabolite
+# This represents the "reliability" or "loading" on the first component
+correlations <- sapply(food_cols, function(col) {
+  # Create binary encoding for groups (0 = Omnivore, 1 = Vegan)
+  group_numeric <- ifelse(data$Classifier == "Vegan", 1, 0)
+  cor(data[[col]], group_numeric, use = "complete.obs")
+})
+
+# Create S-plot data frame
+splot_data <- data.frame(
+  Metabolite = food_cols,
+  Correlation = correlations,
+  FoldChange = as.numeric(fold_changes),
+  PValue = p_values,
+  NegLog10P = neg_log10_p,
+  AbsCorrelation = abs(correlations),
+  AbsFoldChange = abs(as.numeric(fold_changes))
+)
+
+# Remove any rows with NA values
+splot_data <- splot_data[complete.cases(splot_data), ]
+
+# Define significance thresholds for volcano plot
+p_threshold <- 0.05
+fc_threshold <- 0.5  # log2 fold change threshold
+
+# Classify metabolites for volcano plot
+splot_data <- splot_data %>%
+  mutate(
+    Significance = case_when(
+      PValue < p_threshold & FoldChange > fc_threshold ~ "Higher in Vegan",
+      PValue < p_threshold & FoldChange < -fc_threshold ~ "Higher in Omnivore", 
+      TRUE ~ "Not Significant"
+    ),
+    Significant = (AbsCorrelation > quantile(AbsCorrelation, 0.75)) & 
+                  (AbsFoldChange > quantile(AbsFoldChange, 0.75))
+  )
+
+# Filter for significant features only (for bar plots)
+# Define significance thresholds
+correlation_threshold <- 0.3  # Minimum absolute correlation
+fold_change_threshold <- 0.5  # Minimum absolute log2 fold change
+
+significant_data <- splot_data %>%
+  filter(AbsCorrelation > correlation_threshold & AbsFoldChange > fold_change_threshold)
+
+# Get top 10 foods higher in Vegans (positive fold change)
+top_vegan_foods <- significant_data %>%
+  filter(FoldChange > 0) %>%
+  arrange(desc(FoldChange)) %>%
+  head(10) %>%
+  mutate(Category = "Higher in Vegans")
+
+# Get top 10 foods higher in Omnivores (negative fold change)
+top_omnivore_foods <- significant_data %>%
+  filter(FoldChange < 0) %>%
+  arrange(FoldChange) %>%
+  head(10) %>%
+  mutate(Category = "Higher in Omnivores",
+         FoldChange_abs = abs(FoldChange))  # For plotting purposes
+
+  # Create volcano plot
+  p_volcano <- ggplot(splot_data, aes(x = FoldChange, y = NegLog10P)) +
+    geom_point(aes(color = Significance), alpha = 0.7, size = 4) +
+    scale_color_manual(
+      values = c(
+        "Higher in Vegan" = "darkgreen",
+        "Higher in Omnivore" = "darkred", 
+        "Not Significant" = "gray60"
+      ),
+      name = "Significance"
+    ) +
+    geom_hline(yintercept = -log10(p_threshold), linetype = "dashed", color = "red", alpha = 0.7) +
+    geom_vline(xintercept = c(-fc_threshold, fc_threshold), linetype = "dashed", color = "blue", alpha = 0.7) +
+    labs(
+      title = "Volcano Plot: Food Metabolites in Vegan vs Omnivore Diets",
+      subtitle = paste("Significance thresholds: p <", p_threshold, ", |log2FC| >", fc_threshold),
+      x = "log2(Fold Change) - Vegan vs Omnivore",
+      y = "-log10(p-value)",
+      caption = "Dashed lines indicate significance thresholds"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 14, face = "bold"),
+      plot.subtitle = element_text(size = 11),
+      axis.title = element_text(size = 12),
+      legend.position = "right"
+    )
+  
+  # Add labels for most significant metabolites in volcano plot
+  # Select metabolites that are significant and have high fold change
+  volcano_labels <- splot_data %>%
+    filter(Significance != "Not Significant") %>%
+    arrange(desc(NegLog10P)) %>%
+    head(15)  # Top 15 most significant
+  
+  p_volcano_labeled <- p_volcano +
+    geom_text_repel(
+      data = volcano_labels,
+      aes(label = Metabolite),
+      size = 3,
+      max.overlaps = 15,
+      box.padding = 0.5,
+      point.padding = 0.2,
+      segment.color = "gray50",
+      segment.size = 0.3
+    )
+  
+  print(p_volcano)
+  print(p_volcano_labeled)
+  #ggsave("volcano_plot_analog.svg", p_volcano_labeled, width = 12, height = 8, dpi = 300)
+  
+```

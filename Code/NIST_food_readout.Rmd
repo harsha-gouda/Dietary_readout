@@ -7,13 +7,8 @@ date: "2025-08-25"
 knitr::opts_chunk$set(fig.show = 'hide')
 setwd("C:/Users/XXX") #set working directory
 library(tidyverse)
-library(mixOmics)
 library(stringr)
 library(ggplot2)
-library(ggpubr)
-library(vegan)
-library(tibble)
-library(CoDaSeq)
 library(dplyr)
 ```
 
@@ -291,4 +286,5 @@ top_omnivore_foods <- significant_data %>%
   #ggsave("volcano_plot_analog.svg", p_volcano_labeled, width = 12, height = 8, dpi = 300)
   
 ```
+
 

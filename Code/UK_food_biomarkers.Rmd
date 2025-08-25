@@ -7,7 +7,7 @@ output: pdf_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(fig.show = 'hide')
-setwd("C:/Users/harsh/OneDrive - University of California, San Diego Health/Projects/Urine_samples/UK_foods/")
+setwd("C:/Users/XXX") #wroking directory
 library(tidyverse)
 library(mixOmics)
 library(stringr)
@@ -21,9 +21,8 @@ library(dplyr)
 
 ```{r data_import}
 #read_file
-feature_table <- read_csv("UK_foods_iimn_gnps_quant.csv")
-library_matches <- read_csv("UK_foods_annotations.csv")
-metadata <- read_csv("Food_classes.csv") %>% arrange(filename)
+feature_table <- read_csv("UK_foods_iimn_gnps_quant.csv") #feature table
+metadata <- read_csv("Food_classes.csv") %>% arrange(filename) #metadata
 
 #data_transpose
 data_transpose <- feature_table %>% 
@@ -51,10 +50,6 @@ data_clr <- codaSeq.clr(column_to_rownames(data_transpose, var = "filename") + 1
 clr_data <- data_clr %>%  rownames_to_column("filename") %>% arrange(filename)
 clr_data$filename <- trimws(clr_data$filename)
 metadata$filename <- trimws(metadata$filename)
-
-
-
-
 
 #filter_data
 filter_data <- clr_data %>%
@@ -176,3 +171,4 @@ head(biomarkers)
 write.csv(biomarkers, "UK_biomarkers_samplegroup.csv", row.names = FALSE)
 
 ```
+

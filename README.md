@@ -3,7 +3,7 @@ Classification based food biomarker extraction using a multilayer approach. Refe
 
 All the R code discribed in the folder "Code" has been tested on the windows11 laptop using the R version 4.4.1 using Rstudio. To obtain dietary scores for metabolomics data of your interest, please go to GNPS2 supported https://foodreadouts.gnps2.org/ and follow the SOP using GNPS workflows. 
 
-Spectral files (mgf and csv) are deposited in Zenodo ([10.5281/zenodo.17469601](10.5281/zenodo.17469601)) as files are large.
+Spectral files (mgf and csv) are deposited in Zenodo ([10.5281/zenodo.17469601](https://zenodo.org/records/18203282))) as files are large.
 
 SOP for obtaining dietary readout from your datasets:
 

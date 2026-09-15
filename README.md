@@ -1,4 +1,4 @@
-# Dietary readout from an MS/MS food reference library
+# Food Composition estimation from an MS/MS food reference library
 
 Code and food-enriched MS/MS feature tables accompanying the manuscript describing **food composition scores**: a reference-based strategy that matches untargeted LC-MS/MS data from biological samples against MS/MS spectra that are enriched in specific foods, and summarises the matches as a per-food score.
 

@@ -1,15 +1,22 @@
+---
+title: "Food-enriched MS/MS features from the 500-food reference set (Figure 1)"
+author: "Harsha Gouda"
+output: html_document
+---
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(fig.show = 'hide')
-setwd("C:/Users/XXXX") #Set working directory
+# Place the input files (see README) in the same folder as this .Rmd, or set the path below.
+# setwd("path/to/input/files")
 library(tidyverse)
 library(mixOmics)
-library(stringr)
-library(ggplot2)
 library(ggpubr)
 library(vegan)
-library(tibble)
 library(CoDaSeq)
-library(dplyr)
+
+# Selection thresholds applied in the one-vs-rest loop below
+VIP_THRESHOLD <- 6   # keep features with VIP (component 1) above this value
+FC_THRESHOLD  <- 10  # keep features with mean fold-change (category / all other foods) above this value
 ```
 
 ```{r data_import}
@@ -96,9 +103,6 @@ plot(PCA_plot)
 ```
 
 ```{r Loop categories for biomarkers}
-library(mixOmics)
-library(tidyverse)
-
 ### 1. PREPARE DATA ###
 
 # The grouping variable is stored in sample_group.
@@ -146,8 +150,8 @@ for (cat in categories) {
     stringsAsFactors = FALSE
   )
   
-  # Filter for features with VIP > 1.5
-  important_vip <- vip_results %>% filter(VIP > 6)
+  # Filter for features with VIP above VIP_THRESHOLD
+  important_vip <- vip_results %>% filter(VIP > VIP_THRESHOLD)
   
   #### B. Fold-Change Evaluation on VIP-Passing Features ####
   # Use only features that passed the VIP filter.
@@ -189,8 +193,8 @@ for (cat in categories) {
         stringsAsFactors = FALSE
       )
       
-      # Filter for features with fold-change > 4.
-      passed_both <- foldchange_df %>% filter(FoldChange > 10)
+      # Filter for features with fold-change above FC_THRESHOLD
+      passed_both <- foldchange_df %>% filter(FoldChange > FC_THRESHOLD)
       
       # Mark these features as having passed both criteria.
       if (nrow(passed_both) > 0) {

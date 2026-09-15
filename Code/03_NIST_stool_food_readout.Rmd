@@ -1,15 +1,14 @@
 ---
-title: "NIST_diet_readout"
+title: "Food readout of NIST vegetarian/omnivore stool reference materials (Figure 3)"
 output: html_document
 date: "2025-08-25"
 ---
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(fig.show = 'hide')
-setwd("C:/Users/XXX") #set working directory
+# Place the input files (see README) in the same folder as this .Rmd, or set the path below.
+# setwd("path/to/input/files")
 library(tidyverse)
-library(stringr)
-library(ggplot2)
-library(dplyr)
+library(ggrepel)
 ```
 
 ```{r NIST Sample import}

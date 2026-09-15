@@ -1,0 +1,21 @@
+# R / RStudio
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# knitted output and figures written by the scripts
+*.html
+*.pdf
+*.svg
+*.tiff
+Code/*_cache/
+Code/*_files/
+
+# large raw inputs (deposited on MassIVE / Zenodo)
+*.mzML
+*.mgf
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,14 +1,10 @@
-
-setwd("C:/Users/harsh/OneDrive - University of California, San Diego Health/Projects/Food_readouts/RA_MSV000097333/")
+# Food readout of ITIS vs Western diet-fed mice (Figure 2b-c; MassIVE MSV000097333)
+# Place the input files (see README) in the working directory, or set the path below.
+# setwd("path/to/input/files")
 
 library(tidyverse)
-library(tidyr)
-library(stringr)
 library(mixOmics)
-library(ggplot2)
-library(tibble)
-library(dplyr)
-library(pheatmap)
+library(ggpubr)
 library(ggrepel)
 
 #Please obtain food_metadata.tsv file using the GNPS supported food readout app with taskID given in the supporting information

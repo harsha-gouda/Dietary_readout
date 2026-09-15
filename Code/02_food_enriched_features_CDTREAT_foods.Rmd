@@ -1,5 +1,5 @@
 ---
-title: "UK_foods"
+title: "Food-enriched MS/MS features from 92 locally sourced (CD-TREAT, UK) foods (Figure 5 reference library)"
 author: "Harsha Gouda"
 date: "`r Sys.Date()`"
 output: pdf_document
@@ -7,16 +7,13 @@ output: pdf_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(fig.show = 'hide')
-setwd("C:/Users/XXX") #wroking directory
+# Place the input files (see README) in the same folder as this .Rmd, or set the path below.
+# setwd("path/to/input/files")
 library(tidyverse)
 library(mixOmics)
-library(stringr)
-library(ggplot2)
 library(ggpubr)
 library(vegan)
-library(tibble)
 library(CoDaSeq)
-library(dplyr)
 ```
 
 ```{r data_import}
@@ -140,7 +137,7 @@ for (cat in categories) {
   important_vip <- vip_results %>% 
     filter(VIP > 1.5, Loading > 0)
   
-  # Select the top 10 features based on VIP score from those that are high in the category
+  # Select the top 40 features by VIP among those enriched in the category
   top_metabolites <- important_vip %>%
     arrange(desc(VIP)) %>%
     slice_max(order_by = VIP, n = 40) %>%

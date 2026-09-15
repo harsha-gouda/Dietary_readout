@@ -1,0 +1,638 @@
+---
+title: "Food readout of the Mediterranean diet crossover study (Figure 4; MassIVE MSV000093005)"
+author: "Harsha Gouda"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.show = 'hide')
+# Place the input files (see README) in the same folder as this .Rmd, or set the path below.
+# setwd("path/to/input/files")
+library(tidyverse)
+library(mixOmics)
+library(stringr)
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(vegan)
+library(tibble)
+library(CoDaSeq)
+library(dplyr)
+library(pheatmap)
+```
+
+```{r  Samples}
+biomarkers <- read_csv("enriched_features_level1.csv")
+#biomarkers <- read_csv("biomarkers_level5_triplicates.csv")
+Lib_search <- read_tsv("MSV93005_library_matches.tsv")
+metadata <- read_csv("Patterson_metadata.csv")
+Lib_search <- Lib_search[,c("#Scan#", "Node")]
+colnames(biomarkers)[colnames(biomarkers) == "Feature"] <- "Node"
+Biomarker_hits <- Lib_search %>% left_join(biomarkers, by = "Node")
+
+Sample_featuretable <- read_csv("Patterson_Beef_ConjBA_iimn_quant.csv")
+
+#data_transpose
+Sample_transpose <- Sample_featuretable %>% 
+  column_to_rownames("row ID") %>% 
+  dplyr::select(contains(".mzML")) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rownames_to_column("filename")
+
+
+#remove Peak area from filename from feature table
+Sample_transpose$filename <- gsub(" Peak area", "", Sample_transpose$filename)
+Sample_transpose <- Sample_transpose %>% arrange(filename)
+
+#TIC normalisation
+# Set the row names using the 'filename' column
+Sample_tic <- column_to_rownames(Sample_transpose, var = "filename")
+Sample_tic <- Sample_tic + 1
+Sample_tic <- sweep(Sample_tic, 1, rowSums(Sample_tic), FUN = "/")
+Sample_tic <- Sample_tic * 1e5
+Sample_tic <- as.data.frame(Sample_tic)
+Sample_tic <- t(Sample_tic) %>% as.data.frame()
+
+# Bring row names into a column called "row ID"
+Sample_tic <- Sample_tic %>% rownames_to_column("row ID")
+
+Biomarkers_in_samples <- Sample_tic %>%
+  filter(`row ID` %in% Lib_search$`#Scan#`)
+
+Biomarkers_in_samples <- Biomarkers_in_samples %>% 
+  column_to_rownames("row ID") %>% 
+  dplyr::select(contains(".mzML")) %>%
+  as.data.frame() %>% 
+  rownames_to_column("#Scan#")
+
+Biomarker_hits$`#Scan#` <- as.character(Biomarker_hits$`#Scan#`)
+Biomarkers_in_samples <- Biomarkers_in_samples %>% left_join(Biomarker_hits, by = "#Scan#" )
+Biomarkers_in_samples <- Biomarkers_in_samples %>% na.omit(Biomarkers_in_samples$category)
+df_foods <- Biomarkers_in_samples %>%
+  separate_rows(category, sep = ", ") 
+
+food_summarized <- df_foods %>%
+  group_by(category) %>%
+  dplyr::summarise(across(contains("mzmL"), sum, na.rm = TRUE)) %>%
+  ungroup()
+
+food_summarized <- food_summarized %>%
+  column_to_rownames("category") 
+food_summarized <- food_summarized %>% t() %>% as.data.frame()
+food_summarized <- food_summarized %>% rownames_to_column("filename")
+
+food_summarized$filename <- gsub(" Peak area", "", food_summarized$filename)
+
+food_summarized <- bind_cols(
+  filename = food_summarized[[1]],
+  food_summarized %>% 
+    dplyr::select(where(is.numeric)) %>%
+    mutate(across(everything(),
+      ~ {
+        min_val <- min(., na.rm = TRUE)
+        max_val <- max(., na.rm = TRUE)
+        if (max_val == min_val) {
+          rep(50, length(.))
+        } else {
+          ((. - min_val) / (max_val - min_val)) * 100
+        }
+      }
+    ))
+)
+
+food_metadata <- food_summarized %>% left_join(metadata, by = "filename")
+  
+food_metadata <- food_metadata %>%
+  filter(str_detect(PERIOD, "DP|BL")) %>%
+  filter(str_detect(PERIOD, "DP|BL"))
+
+#write.csv(food_metadata, "MEDDiet_level3.csv", row.names = FALSE)
+
+food_metadata$TREAT <- factor(food_metadata$TREAT, levels = c("baseline", "MED0.5", "MED2.5", "MED5.5", "AAD"))
+
+# Define comparisons explicitly using character format
+comparisons_list <- list(
+  c("baseline", "MED0.5"),
+  c("baseline", "MED2.5"),
+  c("baseline", "MED5.5"),
+  c("AAD", "baseline")
+)
+
+# Create the plot
+bar_plot <- ggplot(food_metadata, aes(x = TREAT, y =animal, fill = TREAT)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, size = 2, alpha = 0.8) +
+  stat_summary(fun = median, geom = "line", aes(group = 1), color = "grey", size = 1) +
+  labs(
+    title = "MSV93005 readout",
+    x = "Time period",
+    y = "Relative Intensity"
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 14, colour = "black"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size =12, angle = 45, hjust = 1),
+    panel.border = element_rect(color = "black", size = 1.5, fill = NA)
+  ) +
+  stat_compare_means(method = "wilcox.test", label = "p.signif", comparisons = comparisons_list)  # Pairwise t-tests
+
+print(bar_plot)
+#ggsave("vegetable_TREAT_pvalues.png", plot =bar_plot, dpi = 300, width = 6, height = 6)
+bar_plot <- ggplot(food_metadata, aes(x = TREAT, y = fig, fill = TREAT)) +
+  geom_boxplot(width = 0.2) +
+  geom_jitter(width = 0.2, size = 2, alpha = 0.9, color = "black") +
+  stat_summary(fun = median, geom = "line", aes(group = 1), color = "black", size = 1) +
+  labs(
+    title = "MSV93005 readout",
+    x = "Time period",
+    y = "Relative Intensity"
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 14, colour = "black"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 12, angle = 45, hjust = 1),
+    panel.border = element_rect(color = "black", size = 1.5, fill = NA)
+  ) +
+  stat_compare_means(method = "wilcox.test", label = "p.signif", comparisons = comparisons_list)
+
+print(bar_plot)
+
+```
+
+```{r Spaggati plot}
+
+food_fil <- food_metadata %>% filter(str_detect(TREAT, "AAD|"))
+# Create the spaghetti plot
+spaghetti_plot <- ggplot(food_fil, aes(x = TREAT, y =beef , group = PERIOD, color = PERIOD)) +
+  geom_line(alpha = 0.6, size = 1) +# Connects points for each Study_ID
+  geom_point(size = 4, alpha = 0.8) + # Shows individual points
+  labs(
+    title = "MSV93005 beef readout",
+    x = "Time",
+    y = "Relative Intensity"
+  ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 14, colour = "black"),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 14),
+    panel.border = element_rect(color = "black", size = 1.5, fill = NA)
+  ) +
+  guides(color = "legend")
+
+print(spaghetti_plot)
+
+#ggsave("MSV93005_beef_spaghetti_plot.png", plot = spaghetti_plot, dpi = 300, width = 8, height = 6)
+
+```
+
+
+
+```{r Volcano}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Get numeric variables (excluding ID columns)
+numeric_vars <- names(food_metadata)[sapply(food_metadata, is.numeric)]
+numeric_vars <- numeric_vars[!grepl("ID|id", numeric_vars, ignore.case = TRUE)]
+
+# Define baseline and treatment group for comparison
+baseline_group <- "baseline"
+treatment_group <- "MED5.5"  # Change this to compare different groups
+
+# Calculate statistics for volcano plot
+volcano_data <- data.frame()
+
+for (var in numeric_vars) {
+  # Get data for baseline and treatment
+  baseline_values <- food_metadata[food_metadata$TREAT == baseline_group, var]
+  treatment_values <- food_metadata[food_metadata$TREAT == treatment_group, var]
+  
+  # Remove NA values
+  baseline_values <- baseline_values[!is.na(baseline_values)]
+  treatment_values <- treatment_values[!is.na(treatment_values)]
+  
+  # Skip if not enough data
+  if (length(baseline_values) < 2 || length(treatment_values) < 2) next
+  
+  # Calculate fold change (log2)
+  mean_baseline <- mean(baseline_values)
+  mean_treatment <- mean(treatment_values)
+  fold_change <- log2(mean_treatment / mean_baseline)
+  
+  # Perform t-test
+  t_test <- t.test(treatment_values, baseline_values)
+  p_value <- t_test$p.value
+  
+  # Store results
+  volcano_data <- rbind(volcano_data, data.frame(
+    Variable = var,
+    log2FC = fold_change,
+    pvalue = p_value,
+    neg_log10_pvalue = -log10(p_value),
+    mean_baseline = mean_baseline,
+    mean_treatment = mean_treatment
+  ))
+}
+
+# Add significance categories
+volcano_data$significance <- "Not Significant"
+volcano_data$significance[volcano_data$pvalue < 0.05 & volcano_data$log2FC > 0.5] <- "Up-regulated"
+volcano_data$significance[volcano_data$pvalue < 0.05 & volcano_data$log2FC < -0.5] <- "Down-regulated"
+volcano_data$significance[volcano_data$pvalue < 0.05 & abs(volcano_data$log2FC) <= 0.5] <- "Significant"
+
+# Create volcano plot
+volcano_plot <- ggplot(volcano_data, aes(x = log2FC, y = neg_log10_pvalue, color = significance)) +
+  geom_point(size = 3, alpha = 0.95) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red", alpha = 0.7) +
+  geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", color = "blue", alpha = 0.7) +
+  scale_color_manual(values = c("Up-regulated" = "#A2D17D", 
+                               "Down-regulated" = "#A75252", 
+                               "Significant" = "orange",
+                               "Not Significant" = "gray")) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    legend.title = element_text(size = 10),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  ) +
+  labs(title = paste("Volcano Plot:", treatment_group, "vs", baseline_group),
+       x = "Log2 Fold Change",
+       y = "-Log10 p-value",
+       color = "Significance") +
+  geom_text_repel(data = volcano_data[volcano_data$pvalue < 0.05, ], 
+                  aes(label = Variable), 
+                  size = 3, 
+                  box.padding = 0.3,
+                  point.padding = 0.3)
+
+print(volcano_plot)
+
+#ggsave("Volcano_plot_baselinevsMED5.5.svg", plot = volcano_plot, dpi = 300, width = 8, height = 6)
+
+# Print summary table
+cat("Summary of significant variables:\n")
+significant_vars <- volcano_data[volcano_data$pvalue < 0.05, ]
+if(nrow(significant_vars) > 0) {
+  print(significant_vars[order(significant_vars$pvalue), c("Variable", "log2FC", "pvalue", "significance")])
+} else {
+  cat("No significant variables found.\n")
+}
+
+```
+
+```{r S-plot}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Get numeric variables (excluding ID columns)
+numeric_vars <- names(food_metadata)[sapply(food_metadata, is.numeric)]
+numeric_vars <- numeric_vars[!grepl("ID|id", numeric_vars, ignore.case = TRUE)]
+
+# Define baseline and treatment group for comparison
+baseline_group <- "baseline"
+treatment_group <- "MED5.5"  # Change this to compare different groups
+
+# Calculate statistics for S-plot
+splot_data <- data.frame()
+
+for (var in numeric_vars) {
+  # Get data for baseline and treatment
+  baseline_values <- food_metadata[food_metadata$TREAT == baseline_group, var]
+  treatment_values <- food_metadata[food_metadata$TREAT == treatment_group, var]
+  
+  # Remove NA values
+  baseline_values <- baseline_values[!is.na(baseline_values)]
+  treatment_values <- treatment_values[!is.na(treatment_values)]
+  
+  # Skip if not enough data
+  if (length(baseline_values) < 2 || length(treatment_values) < 2) next
+  
+  # Calculate means
+  mean_baseline <- mean(baseline_values)
+  mean_treatment <- mean(treatment_values)
+  
+  # Calculate covariance and correlation
+  combined_values <- c(baseline_values, treatment_values)
+  group_indicator <- c(rep(0, length(baseline_values)), rep(1, length(treatment_values)))
+  
+  # Calculate covariance between variable and group
+  covariance <- cov(combined_values, group_indicator)
+  
+  # Calculate correlation between variable and group
+  correlation <- cor(combined_values, group_indicator)
+  
+  # Alternative calculation: effect size and reliability
+  pooled_sd <- sqrt(((length(baseline_values) - 1) * var(baseline_values) + 
+                     (length(treatment_values) - 1) * var(treatment_values)) / 
+                    (length(baseline_values) + length(treatment_values) - 2))
+  
+  # Calculate p(1) - contribution to discrimination
+  p1 <- abs(mean_treatment - mean_baseline) / pooled_sd
+  
+  # Calculate p(corr) - reliability/correlation
+  p_corr <- abs(correlation)
+  
+  # Perform t-test for significance
+  t_test <- t.test(treatment_values, baseline_values)
+  p_value <- t_test$p.value
+  
+  # Store results
+  splot_data <- rbind(splot_data, data.frame(
+    Variable = var,
+    p1 = p1,
+    p_corr = p_corr,
+    covariance = covariance,
+    correlation = correlation,
+    pvalue = p_value,
+    mean_baseline = mean_baseline,
+    mean_treatment = mean_treatment,
+    fold_change = mean_treatment / mean_baseline
+  ))
+}
+
+# Add significance categories
+splot_data$significance <- "Not Significant"
+splot_data$significance[splot_data$pvalue < 0.05 & splot_data$p1 > 0.5] <- "Significant & Reliable"
+splot_data$significance[splot_data$pvalue < 0.05 & splot_data$p1 <= 0.5] <- "Significant"
+splot_data$significance[splot_data$pvalue >= 0.05 & splot_data$p1 > 0.5] <- "Reliable"
+
+# Filter for significant variables only
+significant_splot_data <- splot_data[splot_data$pvalue < 0.05, ]
+
+# Create bar plot for p1 (magnitude) - significant variables only
+p1_barplot <- ggplot(significant_splot_data, aes(x = reorder(Variable, p1), y = p1, fill = significance)) +
+  geom_col(alpha = 0.8) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "red", alpha = 0.7) +
+  scale_fill_manual(values = c("Significant & Reliable" = "red", 
+                              "Significant" = "orange",
+                              "Reliable" = "blue")) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    legend.title = element_text(size = 10),
+    axis.title = element_text(size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10)
+  ) +
+  labs(title = paste("Magnitude of Change (p1) - Significant Variables:", treatment_group, "vs", baseline_group),
+       x = "Variables",
+       y = "p(1) - Magnitude of Change",
+       fill = "Classification")
+
+print(p1_barplot)
+
+```
+
+
+```{r PCA/PLSDA}
+food_read <- food_summarized %>% filter(str_detect(filename, "BeefDiet")) %>% filter(!str_detect(filename, "Pool")) %>%arrange(filename)
+metadata <- metadata %>% arrange(filename) %>% filter(filename %in% food_read$filename)
+
+PCA_whole <- mixOmics::pca(food_read, ncomp = 4, scale = TRUE)
+PCA_whole_scores <- data.frame(PCA_whole$variates$X, metadata)
+PCA_plot <- PCA_whole_scores %>%
+  ggscatter(x = "PC1", y = "PC2", color = "TREAT", alpha = 0.9, size = 4.5,
+            title = paste("PCA", "MED diet food readout", sep = " "),
+            xlab = paste("PC1 (", round(PCA_whole$prop_expl_var$X[1]*100, digits = 2),"%)", sep = ""), 
+            ylab = paste("PC2 (", round(PCA_whole$prop_expl_var$X[2]*100, digits = 2),"%)", sep = ""),
+            ggtheme = theme_bw()) +
+  stat_ellipse(aes(colour = TREAT), alpha = 1) + 
+  theme(plot.title = element_text(size = 20, colour = "black"),
+        axis.title = element_text(size = 20),
+        axis.text = element_text(size = 20, face = "bold"),
+        panel.border = element_rect(color = "black", size = 1.5)) +
+  coord_fixed()
+
+print(PCA_plot)
+
+#ggsave("PCA_MED_diet_food_readout.svg", plot = PCA_plot, dpi = 300, width = 8, height = 6)
+
+# Assign sample_type_group3 to a separate variable
+sample_group <- PCA_whole_scores$TREAT
+
+# Ensure the grouping variable is a factor
+PCA_whole_scores$TREAT <- as.factor(sample_group)
+filter_data <- food_read %>% 
+  column_to_rownames("filename") %>% 
+  dplyr::select(where(is.numeric))
+
+# PLS-DA
+PLSDA_whole <- mixOmics::plsda(filter_data, sample_group, ncomp = 5, scale = TRUE)
+PLSDA_whole_scores <- data.frame(PLSDA_whole$variates$X) %>% 
+  rownames_to_column("filename") 
+PLSDA_whole_scores$filename <- trimws(PLSDA_whole_scores$filename)
+PLSDA_whole_scores <- PLSDA_whole_scores %>%
+  left_join(metadata, by = "filename")
+
+
+# Add sample_group as a column to PLSDA_whole_scores
+PLSDA_whole_scores$sample_group <- sample_group
+
+# PLSDA plot
+PLSDA_incubation_time <- PLSDA_whole_scores %>%
+  ggscatter(
+    x = "comp1", y = "comp2", color = "sample_group", alpha = 0.8, 
+    title = "PLSDA_Stool - visit_code",
+    xlab = paste("Component 1 (", round(PLSDA_whole$prop_expl_var$X[1] * 100, digits = 1), "%)", sep = ""), 
+    ylab = paste("Component 2 (", round(PLSDA_whole$prop_expl_var$X[2] * 100, digits = 1), "%)", sep = ""),
+    legend.title = "Group", ggtheme = theme_bw()
+  ) +
+  stat_ellipse(
+    aes(color = sample_group),
+    alpha = 0.8,   # Adjust transparency of the ellipse
+    type = "t"     # Type "t" fits the ellipse to a t-distribution
+  ) +
+  geom_point(
+    data = PLSDA_whole_scores %>% 
+      group_by(sample_group) %>% 
+      summarise(across(matches("comp"), mean)),  # Calculate mean PC1 and PC2
+    aes(comp1, comp2, color = sample_group), 
+    size = 4, 
+    shape = 8  # Star-shaped marker for centroids
+  ) +
+  theme(
+    plot.title = element_text(size = 20, colour = "black"),
+    axis.title = element_text(size = 20),
+    axis.text = element_text(size = 20, face = "bold"),
+    panel.border = element_rect(color = "black", size = 1.5)  # Adjust border color and thickness here
+  ) + 
+  coord_fixed()
+
+print(PLSDA_incubation_time)
+# First, check how many unique groups you have
+table(metadata$TREAT)
+
+# Then provide enough colors (assuming you have 5 groups)
+biplot(PLSDA_whole, 
+       comp = c(1,2), 
+       col.per.group = c("blue", "red", "green", "orange", "purple"), 
+       group = metadata$TREAT, 
+       legend = TRUE, 
+       pch = 19, 
+       cex = 2, 
+       var.label = TRUE, 
+       var.cex = 0.9,
+       cutoff = 0.01,
+       max.overlaps = Inf,
+       ind.names = FALSE,  # This removes individual sample labels
+       title = "PLS-DA Biplot - MED Diet Food Readout")
+
+```
+
+
+```{r Bileacids}
+
+Bileacids <- read_csv("MassQL_bileacids.csv")
+Bileacids <- Bileacids %>% filter(!str_detect(query_validation, "Did not pass"))
+Bileacids$`#Scan#` <- as.character(Bileacids$`#Scan#`)
+bile_cols <- Bileacids$`#Scan#`
+
+Sample_bileacids <- Sample_tic %>% filter(`row ID` %in% bile_cols)
+
+Sample_bileacids <- Sample_bileacids %>% 
+  column_to_rownames("row ID") %>% 
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column("filename")
+
+Sample_bileacids <- Sample_bileacids %>% filter(filename %in% food_metadata$filename)
+Sample_bile_food <- Sample_bileacids %>% left_join(food_metadata, by = "filename")
+foods <- colnames(food_summarized)[-1]  # Exclude the filename column
+
+combined_data <- Sample_bile_food %>%
+  left_join(food_summarized, by = "filename")
+
+print(paste("Using", length(bile_cols), "bile acid columns (scan numbers)"))
+
+# Food columns are from the foods vector (from food_summarized)
+food_cols <- foods
+print(paste("Using", length(food_cols), "food columns"))
+
+# For correlation, we'll use Sample_bile_food for bile acids and food_summarized for foods
+# Both should be merged by filename already in your workflow
+
+# Create the analysis datasets
+bile_data <- Sample_bile_food[, bile_cols, drop = FALSE]
+food_data <- food_summarized[, food_cols, drop = FALSE]
+
+# Make sure we have matching samples (same filenames)
+common_files <- intersect(Sample_bile_food$filename, food_summarized$filename)
+print(paste("Found", length(common_files), "common samples between bile and food data"))
+
+# Filter both datasets to common samples and align them
+bile_subset <- Sample_bile_food[Sample_bile_food$filename %in% common_files, ]
+food_subset <- food_summarized[food_summarized$filename %in% common_files, ]
+
+# Order both datasets by filename to ensure alignment
+bile_subset <- bile_subset[order(bile_subset$filename), ]
+food_subset <- food_subset[order(food_subset$filename), ]
+
+# Extract the data matrices
+bile_data <- bile_subset[, bile_cols, drop = FALSE]
+food_data <- food_subset[, food_cols, drop = FALSE]
+
+print(paste("Final dataset dimensions:"))
+print(paste("Bile acids:", nrow(bile_data), "samples x", ncol(bile_data), "bile acids"))
+print(paste("Foods:", nrow(food_data), "samples x", ncol(food_data), "foods"))
+food_data <- food_subset[, food_cols, drop = FALSE]
+
+# Convert to numeric matrices (in case there are any character columns)
+bile_matrix <- as.matrix(sapply(bile_data, as.numeric))
+food_matrix <- as.matrix(sapply(food_data, as.numeric))
+
+# Calculate Pearson correlations between all bile acids and all foods
+correlation_matrix <- cor(bile_matrix, food_matrix, use = "pairwise.complete.obs")
+
+# Convert to data frame for easier manipulation
+correlation_df <- as.data.frame(correlation_matrix)
+correlation_df$bile_acid <- rownames(correlation_df)
+
+# Reshape to long format for analysis and visualization
+correlation_long <- correlation_df %>%
+  pivot_longer(cols = -bile_acid, 
+               names_to = "food", 
+               values_to = "correlation")
+
+# Remove any NA correlations
+correlation_long <- correlation_long %>%
+  filter(!is.na(correlation))
+
+# View summary of correlations
+print("Summary of correlation coefficients:")
+summary(correlation_long$correlation)
+
+# Find strongest positive and negative correlations
+print("\nTop 10 strongest positive correlations:")
+correlation_long %>%
+  arrange(desc(correlation)) %>%
+  head(10) %>%
+  print()
+
+print("\nTop 10 strongest negative correlations:")
+correlation_long %>%
+  arrange(correlation) %>%
+  head(10) %>%
+  print()
+
+# Create a heatmap of correlations
+# Note: This might be large if you have many bile acids and foods
+# You may want to filter to show only significant correlations
+
+# Filter for correlations with absolute value > 0.3 (adjust threshold as needed)
+significant_correlations <- correlation_long %>%
+  filter(abs(correlation) > 0.3)
+
+Bileacids$`#Scan#` <- as.character(Bileacids$`#Scan#`)
+
+significant_correlations <- significant_correlations %>% left_join(Bileacids, by= c("bile_acid" = "#Scan#"))
+
+library(pheatmap)
+library(dplyr)
+library(tidyr)
+
+if(nrow(significant_correlations) > 0) {
+  # Convert to wide format matrix for pheatmap
+  # Handle duplicates by taking the mean correlation
+  corr_matrix <- significant_correlations %>%
+    dplyr::select(food, Compound_Name, correlation) %>%
+    group_by(food, Compound_Name) %>%
+    summarise(correlation = mean(correlation, na.rm = TRUE), .groups = 'drop') %>%
+    pivot_wider(names_from = food, values_from = correlation, values_fill = 0) %>%
+    column_to_rownames("Compound_Name") %>%
+    as.matrix()
+  
+  # Create the heatmap with pheatmap
+  p1 <- pheatmap(corr_matrix,
+                 color = colorRampPalette(c("blue", "white", "red"))(100),
+                 breaks = seq(-1, 1, length.out = 101),
+                 cluster_rows = TRUE,
+                 cluster_cols = TRUE,
+                 scale = "none",
+                 main = "Bile Acids vs Foods Correlation Heatmap\nShowing correlations with |r| > 0.3",
+                 fontsize = 10,
+                 fontsize_row = 10,
+                 fontsize_col = 10,
+                 angle_col = 45,
+                 cellwidth = 10,
+                 cellheight = 10,
+                 border_color = "grey60",
+                 na_col = "grey90")
+  
+  print(p1)
+} else {
+  print("No correlations with absolute value > 0.3 found")
+}
+
+#ggsave("Bile_acids_foods_correlation_heatmap.svg", plot = p1, dpi = 300, width = 18, height = 10)
+```
+
+
+

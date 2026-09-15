@@ -1,0 +1,266 @@
+---
+title: "Food readout of urine from the Crohn's food re-introduction (CD-TREAT/iPENS) cohort (Figure 5; MassIVE MSV000096125)"
+author: "Harsha Gouda"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.show = 'hide')
+# Place the input files (see README) in the same folder as this .Rmd, or set the path below.
+# setwd("path/to/input/files")
+library(tidyverse)
+library(mixOmics)
+library(stringr)
+library(ggplot2)
+library(ggpubr)
+library(vegan)
+library(tibble)
+library(CoDaSeq)
+library(dplyr)
+```
+
+```{r Unkown Samples}
+biomarkers <- read_csv("Untargeted_biomarkers_level3.csv")
+Lib_search <- read_tsv("Urine_librarymatch_500foods.tsv")
+#biomarkers <- read_csv("UK_biomarkers_samplegroup.csv")
+#Lib_search <- read_tsv("Urine_UK_librarymatch_analog.tsv")
+metadata <- read_csv("IPENS_metadata.csv")
+Lib_search <- Lib_search[,c("#Scan#", "Node")]
+colnames(biomarkers)[colnames(biomarkers) == "feature"] <- "Node"
+Biomarker_hits <- Lib_search %>% left_join(biomarkers, by = c("Node"))
+
+Sample_featuretable <- read_csv("featuretable_MXP_normalized.csv")
+Sample_featuretable$`row ID` <- gsub("CN_", "", Sample_featuretable$`row ID`)
+Sample_featuretable[is.na(Sample_featuretable)] <- 0
+
+#data_transpose
+Sample_transpose <- Sample_featuretable %>% 
+  column_to_rownames("row ID") %>% 
+  dplyr::select(contains(".mzML")) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rownames_to_column("filename")
+
+
+#remove Peak area from filename from feature table
+Sample_transpose$filename <- gsub(" Peak area", "", Sample_transpose$filename)
+Sample_transpose <- Sample_transpose %>% arrange(filename)
+
+#TIC normalisation
+# Set the row names using the 'filename' column
+Sample_tic <- column_to_rownames(Sample_transpose, var = "filename")
+Sample_tic <- Sample_tic + 1
+Sample_tic <- sweep(Sample_tic, 1, rowSums(Sample_tic), FUN = "/")
+Sample_tic <- Sample_tic * 1e3
+Sample_tic <- as.data.frame(Sample_tic)
+Sample_tic <- t(Sample_tic) %>% as.data.frame()
+# Bring row names into a column called "row ID"
+Sample_tic <- Sample_tic %>% rownames_to_column("row ID")
+
+#rclr normalisation
+Sample_clr <- codaSeq.clr(column_to_rownames(Sample_transpose, var = "filename") + 1) %>% as.data.frame()
+Sample_clr <- Sample_clr %>% t() %>% as.data.frame()
+Sample_clr <- Sample_clr %>% rownames_to_column("row ID")
+
+Biomarkers_in_samples <- Sample_tic %>%
+  filter(`row ID` %in% Lib_search$`#Scan#`)
+
+Biomarkers_in_samples <- Biomarkers_in_samples %>% 
+  column_to_rownames("row ID") %>% 
+  dplyr::select(contains(".mzML")) %>%
+  as.data.frame() %>% 
+  rownames_to_column("#Scan#")
+
+Biomarker_hits$`#Scan#` <- as.character(Biomarker_hits$`#Scan#`)
+Biomarkers_in_samples <- Biomarkers_in_samples %>% left_join(Biomarker_hits, by = "#Scan#" )
+Biomarkers_in_samples <- Biomarkers_in_samples %>% na.omit(Biomarkers_in_samples$category)
+df_foods <- Biomarkers_in_samples %>%
+  separate_rows(category, sep = ", ") 
+
+food_summarized <- df_foods %>%
+  group_by(category) %>%
+  dplyr::summarise(across(contains("mzmL"), sum, na.rm = TRUE)) %>%
+  ungroup()
+
+food_summarized <- food_summarized %>% column_to_rownames("category") 
+food_summarized <- food_summarized %>% t() %>% as.data.frame()
+food_summarized <- food_summarized %>% rownames_to_column("filename")
+food_summarized <- food_summarized %>% filter(str_detect(filename, "IPEN"))
+
+food_summarized$filename <- gsub("Peak area", "", food_summarized$filename)
+
+#write.csv(food_summarized, "IPENS_500food_summerized.csv", row.names = FALSE)
+
+metadata <- metadata %>% filter(str_detect(ATTRIBUTE_Study, "CD-TREAT")) %>%
+  filter(!str_detect(filename, "IPENS807D.mzML")) %>% filter(str_detect(ATTRIBUTE_Study_Timepoint, "A|B|C"))
+
+metadata$filename <- trimws(metadata$filename)
+food_summarized$filename <- trimws(food_summarized$filename)
+metadata$filename <- as.character(metadata$filename)
+food_summarized$filename <- as.character(food_summarized$filename)
+
+# Filter food_summarized to keep only filenames present in metadata
+food_summarized_common <- food_summarized %>%
+  filter(filename %in% metadata$filename)
+
+# Merge only the common filenames
+food_metadata <- merge(metadata, food_summarized_common, by = "filename")
+
+
+long_format <- food_metadata %>% 
+  pivot_longer(cols = -c(filename, ATTRIBUTE_SampleType, ATTRIBUTE_Study, ATTRIBUTE_Study_Timepoint), names_to = "Category", values_to = "Intensity")
+
+
+bar_plot <- ggplot(long_format, aes(x = ATTRIBUTE_Study_Timepoint, y = Intensity, color = ATTRIBUTE_Study_Timepoint)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.9, color = "black") +
+  geom_jitter(width = 0.2, size = 1, alpha = 0.7)+
+  facet_wrap(~Category, scales = "free_y")+
+  theme_bw() +  # Clean theme
+  labs(
+    title = "Dietary readout of Urine_UK Samples",
+    x = "Sample Type",
+    y = ""
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 6), # Rotate x-axis labels
+    strip.text = element_text(size = 10, face = "bold") # Adjust facet label size
+  )
+
+print(bar_plot)
+
+#ggsave("Dietaryreadout_IPENS_level5.png", plot = bar_plot ,dpi = 300, width = 20, height = 12)
+
+```
+
+```{r food readout}
+food_read <- food_summarized %>% arrange(filename) %>% filter(food_summarized$filename %in% metadata$filename)
+#write.csv(food_summarized_common, "CD-TREAT_urine_diet_readout.csv", row.names = FALSE)
+
+clr_data <- Sample_clr %>% column_to_rownames("row ID") %>% 
+  t() %>% as.data.frame() %>% rownames_to_column("filename")
+clr_data <- clr_data %>% filter(clr_data$filename %in% metadata$filename)
+#PCA analysis#
+PCA_whole <- mixOmics::pca(clr_data, ncomp = 4, scale = TRUE)
+PCA_whole_scores <- data.frame(PCA_whole$variates$X, metadata)
+PCA_whole_scores <- PCA_whole_scores
+PCA_plot <- PCA_whole_scores %>%
+  ggscatter(x = "PC1", y = "PC2", color = "ATTRIBUTE_Study_Timepoint", alpha = 0.9, size = 2,
+            title = paste("PCA", "diet scores", sep = " "),
+            xlab = paste("PC1 (", round(PCA_whole$prop_expl_var$X[1]*100, digits = 2),"%)", sep = ""), 
+            ylab = paste("PC2 (", round(PCA_whole$prop_expl_var$X[2]*100, digits = 2),"%)", sep = ""),
+            ggtheme = theme_bw()) +
+  stat_ellipse(aes(colour = ATTRIBUTE_Study_Timepoint), alpha = 1) + 
+  theme(plot.title = element_text(size = 20, colour = "black"),
+        axis.title = element_text(size = 20),
+        axis.text = element_text(size = 20, face = "bold"),
+        panel.border = element_rect(color = "black", size = 1.5)) +
+  coord_fixed() +
+  scale_color_manual(
+    values = c("A" = "#05f2d7", "B" = "#f2d705", "C" = "red")  # Custom colors for W12 and W24
+  )
+
+print(PCA_plot)
+
+#ggsave("PCA_CD-TREAT_diet_scores.svg", plot = PCA_plot, dpi = 300, width = 8, height = 6)
+
+
+#PERMANOVA
+clr_data <- clr_data %>% column_to_rownames("filename")
+dist_metabolites_clr <- vegdist(clr_data, method = "euclidean")
+permanova_clr <- adonis2(dist_metabolites_clr ~ PCA_whole_scores$ATTRIBUTE_Study_Timepoint, PCA_whole_scores, na.action = na.omit)
+
+print(permanova_clr)
+
+permanova <- adonis2(dist_metabolites_clr ~ 
+                          UniqueSubjectID + timepoint,
+                          data = PCA_whole_scores, 
+                          na.action = na.omit,
+                          by = "terms")
+
+print(permanova)
+
+
+```
+
+```{r PLSDA}
+
+# Ensure the grouping variable is a factor
+PCA_whole_scores$ATTRIBUTE_Study_Timepoint <- as.factor(PCA_whole_scores$ATTRIBUTE_Study_Timepoint)
+clr_data <- clr_data %>% column_to_rownames("filename")%>% dplyr::select(where(is.numeric))
+#PLS_DA
+PLSDA_whole <- mixOmics::plsda(clr_data,PCA_whole_scores$ATTRIBUTE_Study_Timepoint, ncomp = 5, scale = TRUE)
+PLSDA_whole_scores <- data.frame(PLSDA_whole$variates$X) %>% 
+  rownames_to_column("filename") 
+PLSDA_whole_scores$filename <- trimws(PLSDA_whole_scores$filename)
+PLSDA_whole_scores <- PLSDA_whole_scores %>%
+  left_join(metadata, by = "filename")
+
+
+PLSDA_incubation_time <- PLSDA_whole_scores %>%
+  ggscatter(
+    x = "comp1", 
+    y = "comp2", 
+    color = "ATTRIBUTE_Study_Timepoint", 
+    alpha = 1,
+    size = 2.5,
+    title = "CD-TREAT_Urine",
+    xlab = paste("Component 1 (", round(PLSDA_whole$prop_expl_var$X[1]*100, digits = 1),"%)", sep = ""), 
+    ylab = paste("Component 2 (", round(PLSDA_whole$prop_expl_var$X[2]*100, digits = 1),"%)", sep = ""),
+    legend.title = "Group", 
+    ggtheme = theme_bw()
+  ) +
+  stat_ellipse(
+    aes(color = ATTRIBUTE_Study_Timepoint),
+    alpha = 1,   # Adjust transparency of the ellipse
+    type = "t"     # Type "t" fits the ellipse to a t-distribution
+  ) +
+  geom_point(
+    data = PLSDA_whole_scores %>% 
+      group_by(ATTRIBUTE_Study_Timepoint) %>% 
+      summarise(across(matches("Comp"), mean)),  # Calculate mean PC1 and PC2
+    aes(comp1, comp2, color = ATTRIBUTE_Study_Timepoint), 
+    size = 4, 
+    shape = 8  # Star-shaped marker for centroids
+  ) +
+  scale_color_manual(
+    values = c("A" = "#05f2d7", "B" = "#f2d705", "C" = "red")  # Custom colors for W12 and W24
+  ) +
+  theme(
+    plot.title = element_text(size = 20, colour = "black"),
+    axis.title = element_text(size = 20),
+    axis.text = element_text(size = 20, face = "bold"),
+    panel.border = element_rect(color = "black", size = 1.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),# Adjust border color and thickness here
+  ) + 
+  coord_fixed()
+
+print(PLSDA_incubation_time)
+
+#ggsave("PLSDA_CD-TREAT_clr_data.svg", plot = PLSDA_incubation_time, dpi = 300, width = 8, height = 6)
+
+vip_scores <- mixOmics::vip(PLSDA_whole) %>% as.data.frame()
+loadings   <- as.data.frame(PLSDA_whole$loadings$X)
+vip_comp1 <- vip_scores[, "comp1"]
+
+str(vip_scores)
+head(vip_scores)
+
+vip_results <- data.frame(
+    Feature = rownames(vip_scores),
+    VIP_comp1 = vip_scores[, "comp1"],
+    Loading_comp1 = loadings[, "comp1"],
+    stringsAsFactors = FALSE
+)
+
+library_matches <- read_tsv("merged_results_with_gnps.tsv")
+library_matches$Feature <- as.character(library_matches$`#Scan#`)
+
+vip_results <- vip_results %>%
+  left_join(library_matches, by = "Feature")
+
+
+```
+
+

@@ -4,7 +4,7 @@ Code and food-enriched MS/MS feature tables accompanying the manuscript describi
 
 - **Web app:** https://foodreadouts.gnps2.org/
 - **App documentation / SOP:** https://wang-bioinformatics-lab.github.io/GNPS2_Documentation/metaboapp_Food_Readout/
-- **Supplementary data (Zenodo):** [10.5281/zenodo.19701350]((https://zenodo.org/records/19701350))
+- **Supplementary data (Zenodo):** https://zenodo.org/records/19701350
 
 ## Repository contents
 
